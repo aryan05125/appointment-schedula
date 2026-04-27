@@ -3,54 +3,73 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Appointment } from './appointment.entity';
 import { Doctor } from '../doctor/doctor.entity';
+import { Patient } from '../patient/patient.entity'; // ✅ ADD THIS
 
 @Injectable()
 export class AppointmentService {
   constructor(
     @InjectRepository(Appointment)
     private repo: Repository<Appointment>,
+
     @InjectRepository(Doctor)
     private doctorRepo: Repository<Doctor>,
+
+    @InjectRepository(Patient)
+    private patientRepo: Repository<Patient>, // ✅ ADD THIS
   ) {}
 
-  // 🔹 GET available slots for a given date
+  // 🔹 OPTIONAL (for testing/debug)
   async getAvailableSlots(doctorId: number, date: string) {
     const doctor = await this.doctorRepo.findOne({ where: { id: doctorId } });
     if (!doctor) throw new BadRequestException('Doctor not found');
 
     const dayName = new Date(date).toLocaleDateString('en-US', { weekday: 'long' });
+
     if (!doctor.workingDays.includes(dayName)) {
-      return { message: 'Doctor not available on this day', slots: [] };
+      return { message: 'Doctor not available on this day' };
     }
 
-    const slots = this.generateSlots(doctor.startTime, doctor.endTime, doctor.slotDuration);
+    const totalSlots = this.calculateTotalSlots(
+      doctor.startTime,
+      doctor.endTime,
+      doctor.slotDuration,
+    );
 
-    const booked = await this.repo.find({
+    const bookedCount = await this.repo.count({
       where: { doctorId, date },
     });
 
-    const bookedTimes = booked.map(b => b.time);
-    const available = slots.filter(s => !bookedTimes.includes(s));
-
     return {
-      totalSlots: slots.length,
-      bookedSlots: booked.length,
-      availableSlots: available.length,
-      slots: available,
+      totalSlots,
+      bookedSlots: bookedCount,
+      availableSlots: totalSlots - bookedCount,
     };
   }
 
-  // 🔹 BOOK appointment
-  async book(dto: any) {
-    const doctor = await this.doctorRepo.findOne({ where: { id: dto.doctorId } });
+  // 🔥 MAIN BOOKING LOGIC (IVR STYLE)
+  async book(dto: { doctorId: number; patientId: number }) {
+    const doctor = await this.doctorRepo.findOne({
+      where: { id: dto.doctorId },
+    });
+
     if (!doctor) throw new BadRequestException('Doctor not found');
+
+    // ✅ NEW VALIDATION (IMPORTANT FIX)
+    const patient = await this.patientRepo.findOne({
+      where: { id: dto.patientId },
+    });
+
+    if (!patient) {
+      throw new BadRequestException('Patient not found');
+    }
 
     let date = new Date();
     let checkedDays = 0;
 
-    while (checkedDays < 7) { // ✅ fallback limit
+    while (checkedDays < 7) {
       const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
 
+      // ❌ Skip non-working days
       if (!doctor.workingDays.includes(dayName)) {
         date.setDate(date.getDate() + 1);
         checkedDays++;
@@ -59,68 +78,106 @@ export class AppointmentService {
 
       const formattedDate = date.toISOString().split('T')[0];
 
-      const slots = this.generateSlots(
+      // 🔒 Check duplicate booking (1 per day)
+      const existing = await this.repo.findOne({
+        where: {
+          doctorId: dto.doctorId,
+          patientId: dto.patientId,
+          date: formattedDate,
+        },
+      });
+
+      if (existing) {
+        throw new BadRequestException(
+          'Patient already booked for this day',
+        );
+      }
+
+      const totalSlots = this.calculateTotalSlots(
         doctor.startTime,
         doctor.endTime,
         doctor.slotDuration,
       );
 
-      const booked = await this.repo.find({
-        where: { doctorId: doctor.id, date: formattedDate },
+      const bookedCount = await this.repo.count({
+        where: {
+          doctorId: dto.doctorId,
+          date: formattedDate,
+        },
       });
 
-      const bookedTimes = booked.map(b => b.time);
-      const available = slots.filter(s => !bookedTimes.includes(s));
+      // ✅ If slot available
+      if (bookedCount < totalSlots) {
+        const tokenNumber = bookedCount + 1;
 
-      if (available.length > 0) {
-        dto.date = formattedDate;
+        const reportingTime = this.calculateReportingTime(
+          doctor.startTime,
+          doctor.slotDuration,
+          tokenNumber,
+        );
 
-        // ✅ if user selected time → validate
-        if (dto.time) {
-          if (!available.includes(dto.time)) {
-            throw new BadRequestException('Selected time not available');
-          }
-        } else {
-          dto.time = available[0]; // auto assign
-        }
+        const appointment = this.repo.create({
+          doctorId: dto.doctorId,
+          patientId: dto.patientId,
+          date: formattedDate,
+          tokenNumber,
+          reportingTime,
+          status: 'confirmed',
+        });
 
-        const saved = await this.repo.save(dto);
+        const saved = await this.repo.save(appointment);
 
         return {
           message:
             checkedDays === 0
-              ? 'Appointment booked for today'
-              : `Today full. Booked for next available day: ${dto.date}`,
-          data: saved,
+              ? `Appointment booked for today. Date: ${formattedDate}, Token: ${tokenNumber}, Reporting Time: ${reportingTime}`
+              : `Today appointment is full. Next available appointment booked on ${formattedDate}. Token: ${tokenNumber}, Reporting Time: ${reportingTime}`,
+
+          data: {
+            doctorId: saved.doctorId,
+            patientId: saved.patientId,
+            date: saved.date,
+            tokenNumber: saved.tokenNumber,
+            reportingTime: saved.reportingTime,
+            status: saved.status,
+          },
         };
       }
 
+      // ⏭️ Go next day
       date.setDate(date.getDate() + 1);
       checkedDays++;
     }
 
-    // ❌ fallback message
     throw new BadRequestException(
       'No appointments available in the next 7 days. Please contact clinic.',
     );
   }
 
-  generateSlots(start: string, end: string, duration: number): string[] {
-    const slots: string[] = [];
+  calculateTotalSlots(start: string, end: string, duration: number): number {
+    const [sh, sm] = start.split(':').map(Number);
+    const [eh, em] = end.split(':').map(Number);
 
-    let [h, m] = start.split(':').map(Number);
-    let startDate = new Date();
-    startDate.setHours(h, m, 0, 0);
+    const startMinutes = sh * 60 + sm;
+    const endMinutes = eh * 60 + em;
 
-    let [eh, em] = end.split(':').map(Number);
-    let endDate = new Date();
-    endDate.setHours(eh, em, 0, 0);
+    return Math.floor((endMinutes - startMinutes) / duration);
+  }
 
-    while (startDate < endDate) {
-      slots.push(startDate.toTimeString().slice(0, 5));
-      startDate.setMinutes(startDate.getMinutes() + duration);
-    }
+  calculateReportingTime(
+    start: string,
+    duration: number,
+    tokenNumber: number,
+  ): string {
+    const [sh, sm] = start.split(':').map(Number);
 
-    return slots;
+    const totalMinutes = sh * 60 + sm + (tokenNumber - 1) * duration;
+
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+
+    return `${hours.toString().padStart(2, '0')}:${minutes
+      .toString()
+      .padStart(2, '0')}`;
   }
 }

@@ -15,7 +15,10 @@ export class Appointment {
   date: string;
 
   @Column()
-  time: string;
+  tokenNumber: number;
+
+  @Column()
+  reportingTime: string;
 
   @Column({ default: 'confirmed' })
   status: string;
