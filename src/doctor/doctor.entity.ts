@@ -22,4 +22,11 @@ export class Doctor {
 
   @Column()
   slotDuration: number; // minutes
+
+   @Column("simple-array", { nullable: true })
+  leaveDates: string[]; // ["2026-04-28", "2026-04-30"]
+
+  // 🔥 OPTIONAL: Full Day Leave Toggle
+  @Column({ default: false })
+  isOnLeave: boolean;
 }
