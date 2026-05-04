@@ -11,28 +11,43 @@ export class Appointment {
   @Column()
   patientId: number;
 
-  // 🔥 Date of appointment
   @Column()
   date: string;
 
-  // 🔥 Token system (queue)
   @Column()
-  tokenNumber: number;
+  timeSlot: string;
 
-  // 🔥 Reporting time (calculated)
-  @Column()
-  reportingTime: string;
-
-  // 🔥 NEW: Status handling (important for future)
+  // 🔥 Status
   @Column({ default: 'confirmed' })
-  status: string; 
-  // values: confirmed | cancelled | rescheduled
+  status: string; // confirmed | cancelled | rescheduled
 
-  // 🔥 OPTIONAL (strong for real-world + future features)
+  // 🔥 Previous tracking
   @Column({ nullable: true })
-  reason: string; // patient reason (optional)
+  previousDate: string;
 
-  // 🔥 OPTIONAL (audit / debugging / real system)
+  @Column({ nullable: true })
+  previousTimeSlot: string;
+
+  // 🔥 Reason
+  @Column({ nullable: true })
+  reason: string;
+
+  // 🔥 Who cancelled
+  @Column({ nullable: true })
+  cancelledBy: string;
+
+  // 🔥 Active flag
+  @Column({ default: true })
+  isActive: boolean;
+
+  // 🔹 Created
   @Column({ default: () => 'CURRENT_TIMESTAMP' })
   createdAt: Date;
+
+  // 🔥 Updated
+  @Column({
+    default: () => 'CURRENT_TIMESTAMP',
+    onUpdate: 'CURRENT_TIMESTAMP',
+  })
+  updatedAt: Date;
 }

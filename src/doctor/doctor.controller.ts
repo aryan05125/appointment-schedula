@@ -1,12 +1,10 @@
-import { Controller, Post, Body, Get, Param } from '@nestjs/common';
+import { Controller, Post, Body, Get, Param, Query } from '@nestjs/common';
 import { DoctorService } from './doctor.service';
-import { AppointmentService } from '../appointment/appointment.service';
 
 @Controller('doctor')
 export class DoctorController {
   constructor(
     private service: DoctorService,
-    private appointmentService: AppointmentService, // 🔥 ADD THIS
   ) {}
 
   // ✅ Create Doctor
@@ -15,21 +13,39 @@ export class DoctorController {
     return this.service.create(dto);
   }
 
-  // ✅ Get All Doctors
+  // ✅ Get All Doctors (with filters)
   @Get()
-  findAll() {
-    return this.service.findAll();
+  findAll(
+    @Query('specialization') specialization?: string,
+    @Query('hospitalId') hospitalId?: number,
+  ) {
+    return this.service.findAll({
+      specialization,
+      hospitalId: hospitalId ? Number(hospitalId) : undefined,
+    });
   }
 
-  // 🔥 FIXED: Doctor Leave + Reschedule Call
+  // 🔥 Doctor Leave
   @Post(':id/leave')
   markLeave(
     @Param('id') id: number,
     @Body() body: { date: string },
   ) {
-    return this.appointmentService.handleDoctorLeave(
+    return this.service.markDoctorLeave(
       Number(id),
       body.date,
     );
+  }
+
+  // 🔥 NEW: Get Doctor Address API
+  @Get(':id/address')
+  getAddress(@Param('id') id: number) {
+    return this.service.getDoctorAddress(Number(id));
+  }
+
+  // 🔥 Get Single Doctor
+  @Get(':id')
+  findOne(@Param('id') id: number) {
+    return this.service.findOne(Number(id));
   }
 }
