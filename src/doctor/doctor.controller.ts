@@ -25,7 +25,7 @@ export class DoctorController {
     });
   }
 
-  // 🔥 FIXED: Doctor Leave (use DoctorService)
+  // 🔥 Doctor Leave
   @Post(':id/leave')
   markLeave(
     @Param('id') id: number,
@@ -35,6 +35,12 @@ export class DoctorController {
       Number(id),
       body.date,
     );
+  }
+
+  // 🔥 NEW: Get Doctor Address API
+  @Get(':id/address')
+  getAddress(@Param('id') id: number) {
+    return this.service.getDoctorAddress(Number(id));
   }
 
   // 🔥 Get Single Doctor

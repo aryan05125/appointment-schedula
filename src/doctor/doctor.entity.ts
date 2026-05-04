@@ -12,7 +12,7 @@ export class Doctor {
   @Column({ default: 'General' })
   specialization: string;
 
-  // 🔥 NEW: Hospital support (multi-doctor system)
+  // 🔥 Hospital support (multi-doctor system)
   @Column({ nullable: true })
   hospitalId: number;
 
@@ -44,7 +44,7 @@ export class Doctor {
   @Column({ default: false })
   isOnLeave: boolean;
 
-  // 🔥 Max Appointments Per Day (IMPORTANT for limit logic)
+  // 🔥 Max Appointments Per Day
   @Column({ nullable: true })
   maxAppointmentsPerDay: number;
 
@@ -60,15 +60,39 @@ export class Doctor {
   @Column({ nullable: true })
   bufferTime: number;
 
-  // 🔥 NEW: Priority (for fallback doctor selection)
+  // 🔥 Priority (for fallback doctor selection)
   @Column({ default: 1 })
   priority: number;
 
-  // 🔥 NEW: Experience (optional for sorting/filter)
+  // 🔥 Experience (optional)
   @Column({ nullable: true })
-  experience: number; // years
+  experience: number;
 
-  // 🔥 NEW: Consultation Fees (useful for real system)
+  // 🔥 Consultation Fees
   @Column({ nullable: true })
   fees: number;
+
+  // ===============================
+  // 🔥 NEW: DOCTOR ADDRESS DETAILS
+  // ===============================
+
+  // Clinic / Hospital Name
+  @Column({ nullable: true })
+  clinicName: string;
+
+  // Full Address Line
+  @Column({ nullable: true })
+  addressLine: string;
+
+  // City
+  @Column({ nullable: true })
+  city: string;
+
+  // State
+  @Column({ nullable: true })
+  state: string;
+
+  // Pincode
+  @Column({ nullable: true })
+  pincode: string;
 }

@@ -3,7 +3,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Not, IsNull } from 'typeorm';
+import { Repository, Not } from 'typeorm';
 import { Doctor } from './doctor.entity';
 import { Appointment } from '../appointment/appointment.entity';
 
@@ -34,7 +34,7 @@ export class DoctorService {
     return this.repo.save(doctor);
   }
 
-  // ✅ GET ALL DOCTORS (FILTER SUPPORT)
+  // ✅ GET ALL DOCTORS
   async findAll(filters?: {
     specialization?: string;
     hospitalId?: number;
@@ -79,6 +79,20 @@ export class DoctorService {
     return doctor;
   }
 
+  // 🔥 NEW: GET DOCTOR ADDRESS
+  async getDoctorAddress(id: number) {
+    const doctor = await this.findOne(id);
+
+    return {
+      name: doctor.name,
+      clinicName: doctor.clinicName,
+      addressLine: doctor.addressLine,
+      city: doctor.city,
+      state: doctor.state,
+      pincode: doctor.pincode,
+    };
+  }
+
   // 🔥 MARK DOCTOR LEAVE
   async markDoctorLeave(id: number, date: string) {
     const doctor = await this.findOne(id);
@@ -115,7 +129,7 @@ export class DoctorService {
     return { message: 'Doctor leave updated' };
   }
 
-  // 🔥 HANDLE APPOINTMENTS (SMART RESCHEDULE / FALLBACK)
+  // 🔥 HANDLE APPOINTMENTS
   private async handleAppointmentsOnLeave(
     doctor: Doctor,
     date: string,
@@ -129,7 +143,6 @@ export class DoctorService {
     });
 
     for (const appt of appointments) {
-      // 🔥 Try fallback doctor (same hospital + specialization)
       const fallbackDoctor = await this.findFallbackDoctor(
         doctor,
         date,
@@ -140,7 +153,6 @@ export class DoctorService {
         appt.doctorId = fallbackDoctor.id;
         appt.status = 'rescheduled';
       } else {
-        // 🔥 fallback not found → next date
         const nextDate = this.getNextDate(date);
         appt.date = nextDate;
         appt.status = 'rescheduled';
@@ -150,7 +162,7 @@ export class DoctorService {
     }
   }
 
-  // 🔥 FIND FALLBACK DOCTOR (CORE FEATURE)
+  // 🔥 FIND FALLBACK DOCTOR
   private async findFallbackDoctor(
     doctor: Doctor,
     date: string,
@@ -179,7 +191,7 @@ export class DoctorService {
     return null;
   }
 
-  // 🔥 AVAILABLE SLOTS (REAL FILTERED)
+  // 🔥 AVAILABLE SLOTS
   async getAvailableSlots(id: number, date: string) {
     const doctor = await this.findOne(id);
 
@@ -205,7 +217,6 @@ export class DoctorService {
 
     const allSlots = doctor.availableSlots || [];
 
-    // 🔥 REMOVE BOOKED SLOTS
     const booked = await this.appointmentRepo.find({
       where: {
         doctorId: id,
@@ -220,7 +231,6 @@ export class DoctorService {
       (slot) => !bookedSlots.includes(slot),
     );
 
-    // 🔥 MAX LIMIT LOGIC
     if (
       doctor.maxAppointmentsPerDay &&
       booked.length >= doctor.maxAppointmentsPerDay
@@ -234,7 +244,7 @@ export class DoctorService {
     };
   }
 
-  // 🔥 SLOT GENERATOR (WITH BUFFER)
+  // 🔥 SLOT GENERATOR
   private generateSlots(
     startTime: string,
     endTime: string,
