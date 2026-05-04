@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, Not } from 'typeorm';
 import { Appointment } from './appointment.entity';
 import { Doctor } from '../doctor/doctor.entity';
 import { Patient } from '../patient/patient.entity';
@@ -18,320 +18,249 @@ export class AppointmentService {
     private patientRepo: Repository<Patient>,
   ) {}
 
-  private clinicHolidays: string[] = ['2026-05-01', '2026-05-10'];
+  // 🔥 FUTURE LIMIT
+  private checkFutureLimit(date: string) {
+    const today = new Date();
+    const selected = new Date(date);
 
-  // 🔥 HANDLE DOCTOR LEAVE + RESCHEDULE
-  async handleDoctorLeave(doctorId: number, leaveDate: string) {
-    const doctor = await this.doctorRepo.findOne({ where: { id: doctorId } });
-    if (!doctor) throw new BadRequestException('Doctor not found');
+    const diff =
+      (selected.getTime() - today.getTime()) / (1000 * 60 * 60 * 24);
 
-    doctor.leaveDates = doctor.leaveDates
-      ? [...doctor.leaveDates, leaveDate]
-      : [leaveDate];
-
-    await this.doctorRepo.save(doctor);
-
-    const appointments = await this.repo.find({
-      where: { doctorId, date: leaveDate },
-    });
-
-    let rescheduled = 0;
-
-    for (const appt of appointments) {
-      let newDate = new Date(leaveDate);
-      newDate.setDate(newDate.getDate() + 1);
-
-      let found = false;
-      let attempts = 0;
-
-      while (!found && attempts < 30) {
-        const check = await this.checkDayAvailability(
-          doctorId,
-          newDate,
-          false,
-          doctor,
-        );
-
-        if (check.available) {
-          const formattedDate = check.date;
-
-          const totalSlots = this.calculateTotalSlots(
-            doctor.startTime,
-            doctor.endTime,
-            doctor.slotDuration,
-          );
-
-          const bookedCount = await this.repo.count({
-            where: { doctorId, date: formattedDate },
-          });
-
-          if (bookedCount < totalSlots) {
-            const token = bookedCount + 1;
-
-            const reportingTime = this.calculateReportingTime(
-              doctor.startTime,
-              doctor.slotDuration,
-              token,
-            );
-
-            appt.date = formattedDate;
-            appt.tokenNumber = token;
-            appt.reportingTime = reportingTime;
-            appt.status = 'rescheduled';
-
-            await this.repo.save(appt);
-
-            rescheduled++;
-            found = true;
-            break;
-          }
-        }
-
-        newDate.setDate(newDate.getDate() + 1);
-        attempts++;
-      }
-
-      if (!found) {
-        appt.status = 'cancelled';
-        await this.repo.save(appt);
-      }
+    if (diff > 7) {
+      throw new BadRequestException(
+        'Booking allowed only for next 7 days',
+      );
     }
-
-    return {
-      message: 'Doctor leave applied & appointments handled',
-      total: appointments.length,
-      rescheduled,
-      cancelled: appointments.length - rescheduled,
-    };
   }
 
+  // 🔥 FIND FALLBACK DOCTOR
+  private async findFallbackDoctor(doctor: Doctor, date: string) {
+    const fallback = await this.doctorRepo.findOne({
+      where: {
+        specialization: doctor.specialization,
+        hospitalId: doctor.hospitalId,
+        id: Not(doctor.id),
+        isActive: true,
+      },
+    });
+
+    if (!fallback) return null;
+
+    // check fallback availability
+    if (fallback.isOnLeave || fallback.leaveDates?.includes(date)) {
+      return null;
+    }
+
+    return fallback;
+  }
+
+  // ✅ GET SLOTS
   async getAvailableSlots(doctorId: number, date: string) {
     const doctor = await this.doctorRepo.findOne({ where: { id: doctorId } });
     if (!doctor) throw new BadRequestException('Doctor not found');
 
-    const dayName = new Date(date).toLocaleDateString('en-US', { weekday: 'long' });
-
-    if (this.clinicHolidays.includes(date)) {
-      return { message: 'Clinic is closed on this date' };
-    }
-
-    if (!doctor.workingDays.includes(dayName)) {
-      return { message: 'Doctor not available on this day' };
-    }
-
-    if (doctor.isOnLeave || doctor.leaveDates?.includes(date)) {
-      return { message: 'Doctor is on leave on this date' };
-    }
-
-    const totalSlots = this.calculateTotalSlots(
-      doctor.startTime,
-      doctor.endTime,
-      doctor.slotDuration,
-    );
-
-    const bookedCount = await this.repo.count({
-      where: { doctorId, date },
-    });
-
-    return {
-      totalSlots,
-      bookedSlots: bookedCount,
-      availableSlots: totalSlots - bookedCount,
-    };
-  }
-
-  async getNextAvailableDay(doctorId: number, from: string) {
-    let date = new Date(from);
-    let checkedDays = 0;
-
-    while (checkedDays < 30) {
-      const result = await this.checkDayAvailability(doctorId, date);
-
-      if (result.available) {
-        return {
-          date: result.date,
-          message: `Next available slot is on ${result.date}`,
-        };
-      }
-
-      date.setDate(date.getDate() + 1);
-      checkedDays++;
-    }
-
-    throw new BadRequestException('No available slots in next 30 days');
-  }
-
-  async book(dto: {
-    doctorId: number;
-    patientId: number;
-    preferredDate?: string;
-  }) {
-    const doctor = await this.doctorRepo.findOne({ where: { id: dto.doctorId } });
-    if (!doctor) throw new BadRequestException('Doctor not found');
-
-    const patient = await this.patientRepo.findOne({ where: { id: dto.patientId } });
-    if (!patient) throw new BadRequestException('Patient not found');
-
-    let date = dto.preferredDate ? new Date(dto.preferredDate) : new Date();
-
-    let checkedDays = 0;
-    let reason = '';
-
-    while (checkedDays < 30) {
-      const check = await this.checkDayAvailability(
-        dto.doctorId,
-        date,
-        checkedDays === 0,
-        doctor,
-      );
-
-      if (!check.available) {
-        reason = check.reason || '';
-        date.setDate(date.getDate() + 1);
-        checkedDays++;
-        continue;
-      }
-
-      const formattedDate = check.date;
-
-      const existingSameDay = await this.repo.findOne({
-        where: {
-          patientId: dto.patientId,
-          date: formattedDate,
-        },
-      });
-
-      if (existingSameDay) {
-        throw new BadRequestException(
-          'Patient already has an appointment for this day',
-        );
-      }
-
-      const bookedCount = await this.repo.count({
-        where: { doctorId: doctor.id, date: formattedDate },
-      });
-
-      const token = bookedCount + 1;
-
-      const reportingTime = this.calculateReportingTime(
-        doctor.startTime,
-        doctor.slotDuration,
-        token,
-      );
-
-      const sameTime = await this.repo.findOne({
-        where: {
-          patientId: dto.patientId,
-          date: formattedDate,
-          reportingTime,
-        },
-      });
-
-      if (sameTime) {
-        throw new BadRequestException(
-          'Patient already has an appointment at this time with another doctor',
-        );
-      }
-
-      const appointment = this.repo.create({
-        doctorId: dto.doctorId,
-        patientId: dto.patientId,
-        date: formattedDate,
-        tokenNumber: token,
-        reportingTime,
-        status: 'confirmed',
-      });
-
-      const saved = await this.repo.save(appointment);
-
-      return {
-        message:
-          checkedDays === 0
-            ? `Appointment confirmed for today`
-            : `${reason} Next available slot booked on ${formattedDate}`,
-        data: saved,
-      };
-    }
-
-    throw new BadRequestException(
-      'No appointments available in next 30 days',
-    );
-  }
-
-  async checkDayAvailability(
-    doctorId: number,
-    dateObj: Date,
-    isToday = false,
-    doctor?: Doctor,
-  ) {
-    const date = dateObj.toISOString().split('T')[0];
-    const dayName = dateObj.toLocaleDateString('en-US', {
+    const dayName = new Date(date).toLocaleDateString('en-US', {
       weekday: 'long',
     });
 
-    if (!doctor) {
-      const foundDoctor = await this.doctorRepo.findOne({
-        where: { id: doctorId },
-      });
-
-      if (!foundDoctor) {
-        return { available: false, reason: 'Doctor not found', date };
-      }
-
-      doctor = foundDoctor;
-    }
-
-    if (this.clinicHolidays.includes(date)) {
-      return { available: false, reason: 'Clinic is closed.', date };
-    }
-
     if (!doctor.workingDays.includes(dayName)) {
-      return { available: false, reason: 'Doctor not working.', date };
+      return { message: 'Doctor not working', slots: [] };
     }
 
     if (doctor.isOnLeave || doctor.leaveDates?.includes(date)) {
-      return { available: false, reason: 'Doctor is on leave.', date };
+      return { message: 'Doctor is on leave', slots: [] };
     }
 
-    if (isToday && this.isConsultingOver(new Date(), doctor.endTime)) {
-      return { available: false, reason: 'Consultation over.', date };
-    }
+    const allSlots = doctor.availableSlots || [];
 
-    const totalSlots = this.calculateTotalSlots(
-      doctor.startTime,
-      doctor.endTime,
-      doctor.slotDuration,
-    );
-
-    const bookedCount = await this.repo.count({
-      where: { doctorId, date },
+    const booked = await this.repo.find({
+      where: { doctorId, date, status: 'confirmed' },
     });
 
-    if (bookedCount >= totalSlots) {
-      return { available: false, reason: 'Slots full.', date };
+    if (
+      doctor.maxAppointmentsPerDay &&
+      booked.length >= doctor.maxAppointmentsPerDay
+    ) {
+      return { message: 'Max appointments reached', slots: [] };
     }
 
-    return { available: true, date };
+    const bookedSlots = booked.map((b) => b.timeSlot);
+
+    const availableSlots = allSlots.filter(
+      (slot) => !bookedSlots.includes(slot),
+    );
+
+    return {
+      totalSlots: allSlots.length,
+      bookedSlots: booked.length,
+      availableSlots: availableSlots.length,
+      slots: availableSlots,
+    };
   }
 
-  isConsultingOver(current: Date, endTime: string): boolean {
-    const [h, m] = endTime.split(':').map(Number);
-    const end = new Date();
-    end.setHours(h, m, 0, 0);
-    return current > end;
+  // 🔥 BOOK WITH FALLBACK SUPPORT
+  async book(dto: {
+    doctorId: number;
+    patientId: number;
+    date: string;
+    timeSlot?: string;
+  }) {
+    this.checkFutureLimit(dto.date);
+
+    let doctor = await this.doctorRepo.findOne({
+      where: { id: dto.doctorId },
+    });
+    if (!doctor) throw new BadRequestException('Doctor not found');
+
+    const patient = await this.patientRepo.findOne({
+      where: { id: dto.patientId },
+    });
+    if (!patient) throw new BadRequestException('Patient not found');
+
+    const dayName = new Date(dto.date).toLocaleDateString('en-US', {
+      weekday: 'long',
+    });
+
+    if (!doctor.workingDays.includes(dayName)) {
+      throw new BadRequestException('Doctor not working');
+    }
+
+    // 🔥 MAIN FIX → FALLBACK LOGIC
+    if (doctor.isOnLeave || doctor.leaveDates?.includes(dto.date)) {
+      const fallback = await this.findFallbackDoctor(doctor, dto.date);
+
+      if (!fallback) {
+        throw new BadRequestException('Doctor on leave');
+      }
+
+      doctor = fallback; // 🔥 switch doctor
+    }
+
+    // 🔥 AUTO SLOT
+    if (!dto.timeSlot) {
+      const slotsData = await this.getAvailableSlots(
+        doctor.id,
+        dto.date,
+      );
+
+      if (!slotsData.slots.length) {
+        throw new BadRequestException('No slots available');
+      }
+
+      dto.timeSlot = slotsData.slots[0];
+    }
+
+    if (!doctor.availableSlots.includes(dto.timeSlot)) {
+      throw new BadRequestException('Invalid slot');
+    }
+
+    // ❌ Slot already booked
+    const existing = await this.repo.findOne({
+      where: {
+        doctorId: doctor.id,
+        date: dto.date,
+        timeSlot: dto.timeSlot,
+        status: 'confirmed',
+      },
+    });
+
+    if (existing) {
+      throw new BadRequestException('Slot already booked');
+    }
+
+    // ❌ Same patient conflict
+    const sameTime = await this.repo.findOne({
+      where: {
+        patientId: dto.patientId,
+        date: dto.date,
+        timeSlot: dto.timeSlot,
+        status: 'confirmed',
+      },
+    });
+
+    if (sameTime) {
+      throw new BadRequestException('Same time conflict');
+    }
+
+    const appointment = this.repo.create({
+      doctorId: doctor.id, // 🔥 important
+      patientId: dto.patientId,
+      date: dto.date,
+      timeSlot: dto.timeSlot,
+      status: 'confirmed',
+    });
+
+    return {
+      message:
+        doctor.id === dto.doctorId
+          ? 'Appointment booked'
+          : 'Booked with fallback doctor',
+      data: await this.repo.save(appointment),
+    };
   }
 
-  calculateTotalSlots(start: string, end: string, duration: number): number {
-    const [sh, sm] = start.split(':').map(Number);
-    const [eh, em] = end.split(':').map(Number);
-    return Math.floor((eh * 60 + em - (sh * 60 + sm)) / duration);
+  // 🔥 CANCEL
+  async cancel(id: number, reason?: string) {
+    const appt = await this.repo.findOne({ where: { id } });
+    if (!appt) throw new BadRequestException('Appointment not found');
+
+    appt.status = 'cancelled';
+    appt.reason = reason || 'Cancelled by patient';
+    appt.cancelledBy = 'patient';
+    appt.isActive = false;
+
+    return this.repo.save(appt);
   }
 
-  calculateReportingTime(start: string, duration: number, token: number): string {
-    const [sh, sm] = start.split(':').map(Number);
-    const total = sh * 60 + sm + (token - 1) * duration;
-    const h = Math.floor(total / 60);
-    const m = total % 60;
-    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+  // 🔥 RESCHEDULE
+  async reschedule(
+    id: number,
+    body: { newDate: string; newTimeSlot?: string },
+  ) {
+    const appt = await this.repo.findOne({ where: { id } });
+    if (!appt) throw new BadRequestException('Appointment not found');
+
+    this.checkFutureLimit(body.newDate);
+
+    if (!body.newTimeSlot) {
+      const slots = await this.getAvailableSlots(
+        appt.doctorId,
+        body.newDate,
+      );
+
+      if (!slots.slots.length) {
+        throw new BadRequestException('No slots available');
+      }
+
+      body.newTimeSlot = slots.slots[0];
+    }
+
+    appt.previousDate = appt.date;
+    appt.previousTimeSlot = appt.timeSlot;
+
+    appt.date = body.newDate;
+    appt.timeSlot = body.newTimeSlot;
+    appt.status = 'rescheduled';
+
+    return this.repo.save(appt);
+  }
+
+  // 🔥 NEXT AVAILABLE
+  async getNextAvailableDay(doctorId: number, from: string) {
+    let date = new Date(from);
+
+    for (let i = 0; i < 30; i++) {
+      const formatted = date.toISOString().split('T')[0];
+
+      const slots = await this.getAvailableSlots(doctorId, formatted);
+
+      if (slots.slots?.length > 0) {
+        return { date: formatted, slots: slots.slots };
+      }
+
+      date.setDate(date.getDate() + 1);
+    }
+
+    throw new BadRequestException('No slots available');
   }
 }
