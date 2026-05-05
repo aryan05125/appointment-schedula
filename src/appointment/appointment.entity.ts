@@ -1,19 +1,39 @@
-import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
+import { Doctor } from '../doctor/doctor.entity';
+import { Patient } from '../patient/patient.entity';
 
 @Entity()
 export class Appointment {
   @PrimaryGeneratedColumn()
   id: number;
 
+  // 🔥 RELATION: Doctor
+  @ManyToOne(() => Doctor, { eager: true })
+  @JoinColumn({ name: 'doctorId' })
+  doctor: Doctor;
+
   @Column()
   doctorId: number;
+
+  // 🔥 RELATION: Patient
+  @ManyToOne(() => Patient, { eager: true })
+  @JoinColumn({ name: 'patientId' })
+  patient: Patient;
 
   @Column()
   patientId: number;
 
+  // 🔹 Appointment Date
   @Column()
   date: string;
 
+  // 🔹 Time Slot
   @Column()
   timeSlot: string;
 

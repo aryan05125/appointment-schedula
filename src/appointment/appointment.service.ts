@@ -46,7 +46,6 @@ export class AppointmentService {
 
     if (!fallback) return null;
 
-    // check fallback availability
     if (fallback.isOnLeave || fallback.leaveDates?.includes(date)) {
       return null;
     }
@@ -74,7 +73,11 @@ export class AppointmentService {
     const allSlots = doctor.availableSlots || [];
 
     const booked = await this.repo.find({
-      where: { doctorId, date, status: 'confirmed' },
+      where: {
+        doctor: { id: doctorId },
+        date,
+        status: 'confirmed',
+      },
     });
 
     if (
@@ -98,7 +101,7 @@ export class AppointmentService {
     };
   }
 
-  // 🔥 BOOK WITH FALLBACK SUPPORT
+  // 🔥 BOOK WITH RELATION + FALLBACK
   async book(dto: {
     doctorId: number;
     patientId: number;
@@ -125,7 +128,7 @@ export class AppointmentService {
       throw new BadRequestException('Doctor not working');
     }
 
-    // 🔥 MAIN FIX → FALLBACK LOGIC
+    // 🔥 FALLBACK LOGIC
     if (doctor.isOnLeave || doctor.leaveDates?.includes(dto.date)) {
       const fallback = await this.findFallbackDoctor(doctor, dto.date);
 
@@ -133,7 +136,7 @@ export class AppointmentService {
         throw new BadRequestException('Doctor on leave');
       }
 
-      doctor = fallback; // 🔥 switch doctor
+      doctor = fallback;
     }
 
     // 🔥 AUTO SLOT
@@ -154,10 +157,10 @@ export class AppointmentService {
       throw new BadRequestException('Invalid slot');
     }
 
-    // ❌ Slot already booked
+    // ❌ SLOT ALREADY BOOKED
     const existing = await this.repo.findOne({
       where: {
-        doctorId: doctor.id,
+        doctor: { id: doctor.id },
         date: dto.date,
         timeSlot: dto.timeSlot,
         status: 'confirmed',
@@ -168,10 +171,10 @@ export class AppointmentService {
       throw new BadRequestException('Slot already booked');
     }
 
-    // ❌ Same patient conflict
+    // ❌ SAME PATIENT CONFLICT
     const sameTime = await this.repo.findOne({
       where: {
-        patientId: dto.patientId,
+        patient: { id: dto.patientId },
         date: dto.date,
         timeSlot: dto.timeSlot,
         status: 'confirmed',
@@ -183,8 +186,8 @@ export class AppointmentService {
     }
 
     const appointment = this.repo.create({
-      doctorId: doctor.id, // 🔥 important
-      patientId: dto.patientId,
+      doctor,
+      patient,
       date: dto.date,
       timeSlot: dto.timeSlot,
       status: 'confirmed',
@@ -217,14 +220,18 @@ export class AppointmentService {
     id: number,
     body: { newDate: string; newTimeSlot?: string },
   ) {
-    const appt = await this.repo.findOne({ where: { id } });
+    const appt = await this.repo.findOne({
+      where: { id },
+      relations: ['doctor'],
+    });
+
     if (!appt) throw new BadRequestException('Appointment not found');
 
     this.checkFutureLimit(body.newDate);
 
     if (!body.newTimeSlot) {
       const slots = await this.getAvailableSlots(
-        appt.doctorId,
+        appt.doctor.id,
         body.newDate,
       );
 

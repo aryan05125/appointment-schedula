@@ -7,86 +7,65 @@ import {
   Delete,
   Param,
   Patch,
-  BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
 import { AppointmentService } from './appointment.service';
+import { CreateAppointmentDto } from './dto/create-appointment.dto';
+import { AuthGuard } from '@nestjs/passport';
 
 @Controller('appointments')
 export class AppointmentController {
   constructor(private service: AppointmentService) {}
 
-  // 🔥 BOOK APPOINTMENT (AUTO SLOT SUPPORT)
+  // 🔐 BOOK APPOINTMENT (PROTECTED)
+  @UseGuards(AuthGuard('jwt'))
   @Post()
-  book(
-    @Body()
-    dto: {
-      doctorId: number;
-      patientId: number;
-      date: string;
-      timeSlot?: string; // 🔥 optional now
-    },
-  ) {
-    if (!dto.doctorId || !dto.patientId || !dto.date) {
-      throw new BadRequestException(
-        'doctorId, patientId, and date are required',
-      );
-    }
-
+  book(@Body() dto: CreateAppointmentDto) {
     return this.service.book(dto);
   }
 
-  // 🔥 GET AVAILABLE SLOTS
+  // 🌐 GET AVAILABLE SLOTS (PUBLIC)
   @Get('slots')
   getSlots(
-    @Query('doctorId') doctorId: number,
+    @Query('doctorId') doctorId: string,
     @Query('date') date: string,
   ) {
-    if (!doctorId || !date) {
-      throw new BadRequestException('doctorId and date are required');
-    }
-
     return this.service.getAvailableSlots(Number(doctorId), date);
   }
 
-  // 🔥 NEXT AVAILABLE DAY
+  // 🌐 NEXT AVAILABLE DAY (PUBLIC)
   @Get('next-available')
   getNextAvailable(
-    @Query('doctorId') doctorId: number,
+    @Query('doctorId') doctorId: string,
     @Query('from') from: string,
   ) {
-    if (!doctorId) {
-      throw new BadRequestException('doctorId is required');
-    }
-
     return this.service.getNextAvailableDay(
       Number(doctorId),
       from || new Date().toISOString().split('T')[0],
     );
   }
 
-  // 🔥 CANCEL APPOINTMENT
+  // 🔐 CANCEL APPOINTMENT (PROTECTED)
+  @UseGuards(AuthGuard('jwt'))
   @Delete(':id')
   cancel(
-    @Param('id') id: number,
+    @Param('id') id: string,
     @Body() body: { reason?: string },
   ) {
     return this.service.cancel(Number(id), body?.reason);
   }
 
-  // 🔥 RESCHEDULE APPOINTMENT (NEW API)
+  // 🔐 RESCHEDULE APPOINTMENT (PROTECTED)
+  @UseGuards(AuthGuard('jwt'))
   @Patch(':id/reschedule')
   reschedule(
-    @Param('id') id: number,
+    @Param('id') id: string,
     @Body()
     body: {
       newDate: string;
       newTimeSlot?: string;
     },
   ) {
-    if (!body.newDate) {
-      throw new BadRequestException('newDate is required');
-    }
-
     return this.service.reschedule(Number(id), body);
   }
 }
