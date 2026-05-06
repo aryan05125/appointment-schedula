@@ -115,6 +115,62 @@ npm run start:dev
 
 ## 👨‍💻 Author
 
+
+05/05/2026
+
+# 🚀 Advanced Appointment Booking Features
+
+The following real-world clinic workflow features are planned / analyzed for improving the appointment booking system.
+
+---
+
+## 1. Unified Queue Management
+
+Manage walk-in, online, and WhatsApp bookings in a single queue system.
+
+### Benefits
+- Organized patient flow
+- Single queue management
+- Better clinic efficiency
+
+---
+
+## 2. No-show & Late Patient Handling
+
+Automatically handle patients who miss or delay appointments.
+
+### Benefits
+- Dynamic queue updates
+- Reduced waiting time
+- Better appointment flow
+
+---
+
+## 3. Live Queue Tracking
+
+Patients can view their queue position and estimated waiting time.
+
+### Benefits
+- Improved patient experience
+- Reduced waiting area crowd
+- Real-time tracking
+
+---
+
+## 4. Doctor Rating & Feedback System
+
+Patients can rate doctors and provide reviews after appointments.
+
+### Benefits
+- Service quality improvement
+- Better trust for patients
+- Useful clinic insights
+
+---
+
+# 📊 Feature Overview
+
+![Features](./docs/features.png)
 Aryan Chauhan
 
  
